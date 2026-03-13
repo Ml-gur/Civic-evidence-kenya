@@ -1,0 +1,9 @@
+{
+  "name": "Civic Evidence Kenya",
+  "description": "A mobile-first civic media platform for real-time documentation of public infrastructure and services in Kenya.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}

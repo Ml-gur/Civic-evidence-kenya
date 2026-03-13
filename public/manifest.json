@@ -1,0 +1,32 @@
+{
+  "name": "Citizen Witness Kenya",
+  "short_name": "Citizen",
+  "description": "The national ledger for public infrastructure accountability. Report roads, water, health, schools, and infrastructure issues.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#006600",
+  "background_color": "#ffffff",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": [
+    "government",
+    "social",
+    "news"
+  ],
+  "lang": "en-KE",
+  "prefer_related_applications": false
+}
