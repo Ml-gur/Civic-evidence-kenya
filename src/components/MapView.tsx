@@ -2,7 +2,7 @@ import React from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { Post } from '../lib/supabase';
+import { Issue } from '../lib/supabase';
 
 // Fix Leaflet icon issue
 // @ts-ignore
@@ -20,7 +20,7 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 interface MapViewProps {
-  posts: Post[];
+  posts: Issue[];
   center?: [number, number];
   zoom?: number;
 }
@@ -40,7 +40,7 @@ export const MapView: React.FC<MapViewProps> = ({ posts, center = [1.2921, 36.82
           url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         />
         {posts.map((post) => (
-          <Marker key={post.id} position={[post.gps_lat, post.gps_long] as [number, number]}>
+          <Marker key={post.issue_id} position={[post.gps_lat, post.gps_lng] as [number, number]}>
             <Popup className="custom-popup">
               <div className="p-2 min-w-[160px]">
                 <div className="relative mb-3">
@@ -48,13 +48,13 @@ export const MapView: React.FC<MapViewProps> = ({ posts, center = [1.2921, 36.82
                   <span className={cn(
                     "absolute top-2 right-2 px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest shadow-lg backdrop-blur-md border border-white/20",
                     post.status === 'verified' ? "bg-emerald-500/90 text-white" :
-                    post.status === 'under_review' ? "bg-amber-500/90 text-white" :
+                    post.status === 'pending' ? "bg-amber-500/90 text-white" :
                     "bg-black/50 text-white"
                   )}>
                     {post.status.replace('_', ' ')}
                   </span>
                 </div>
-                <p className="text-[11px] font-bold text-stone-900 leading-snug line-clamp-2 mb-2">{post.description}</p>
+                <p className="text-[11px] font-bold text-stone-900 leading-snug line-clamp-2 mb-2">{post.title || post.description}</p>
                 <div className="flex items-center justify-between pt-2 border-t border-stone-100">
                   <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600">{post.ward_id}</span>
                   <span className="text-[9px] font-bold text-stone-400">{post.county_id}</span>
@@ -79,7 +79,7 @@ export const MapView: React.FC<MapViewProps> = ({ posts, center = [1.2921, 36.82
           </div>
           <div className="col-span-1 bg-white/90 backdrop-blur-xl p-3 rounded-2xl border border-white/20 text-stone-900 shadow-xl pointer-events-auto">
             <p className="text-[8px] font-black uppercase tracking-[0.1em] text-stone-400 mb-0.5">Critical</p>
-            <p className="text-lg font-display font-bold text-red-600">{posts.filter(p => p.status === 'under_review').length}</p>
+            <p className="text-lg font-display font-bold text-red-600">{posts.filter(p => p.severity === 'high').length}</p>
           </div>
         </div>
       </div>

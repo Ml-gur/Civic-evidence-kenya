@@ -6,11 +6,11 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatDistanceToNow } from 'date-fns';
-import { Post } from '../lib/supabase';
+import { Issue } from '../lib/supabase';
 import { cn, isLowBandwidth } from '../lib/utils';
 
 interface PostCardProps {
-  post: Post;
+  post: Issue;
   onSelect?: () => void;
   onVote?: (type: 'confirm' | 'dispute') => void;
   onFlag?: (type: string) => void;
@@ -25,23 +25,23 @@ const CATEGORY_META: Record<string, { icon: React.ReactNode; label: string; colo
   infrastructure: { icon: <Building2 size={12} />, label: 'Infrastructure', color: 'text-purple-600 bg-purple-50' },
 };
 
-const VERIFICATION_BADGES = (post: Post) => {
+const VERIFICATION_BADGES = (post: Issue) => {
   const badges: { label: string; color: string; icon: React.ReactNode }[] = [];
   if (post.status === 'verified')
     badges.push({ label: 'Admin Verified', color: 'bg-kenya-green/10 text-kenya-green border-kenya-green/20', icon: <ShieldCheck size={10} /> });
-  if ((post.verifier_count_local ?? 0) >= 1)
-    badges.push({ label: 'Locally Verified', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: <MapPin size={10} /> });
-  if ((post.verifier_count_media ?? 0) >= 1)
-    badges.push({ label: 'Media Corroborated', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: <Camera size={10} /> });
-  if ((post.effective_dispute ?? 0) > 3)
-    badges.push({ label: 'Disputed', color: 'bg-red-50 text-red-600 border-red-200', icon: <Flag size={10} /> });
+  if ((post.unique_regions_verified ?? 0) >= 1)
+    badges.push({ label: 'Multi-Region Verification', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: <MapPin size={10} /> });
+  if (post.is_sensitive)
+    badges.push({ label: 'Sensitive Report', color: 'bg-red-50 text-red-700 border-red-200', icon: <Flag size={10} /> });
+  if ((post.confidence_score ?? 0) < 0)
+    badges.push({ label: 'Disputed', color: 'bg-amber-50 text-amber-600 border-amber-200', icon: <Flag size={10} /> });
   return badges;
 };
 
 export const PostCard: React.FC<PostCardProps> = ({ post, onSelect, onVote, onFlag, onComment }) => {
   const [voted, setVoted] = React.useState<'confirm' | 'dispute' | null>(() => {
     const gv = JSON.parse(localStorage.getItem('guest_votes') || '{}');
-    return gv[post.id] ? 'confirm' : null;
+    return gv[post.issue_id] ? 'confirm' : null;
   });
   const [showComments, setShowComments] = useState(false);
   const [flagged, setFlagged] = useState(false);
@@ -50,7 +50,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onSelect, onVote, onFl
 
   const lowBandwidth = isLowBandwidth();
   const badges = VERIFICATION_BADGES(post);
-  const catMeta = post.issue_category ? CATEGORY_META[post.issue_category] : null;
+  const catMeta = post.issue_type_id ? CATEGORY_META[post.issue_type_id] : null;
 
   const handleVoteClick = (type: 'confirm' | 'dispute') => {
     if (voted === type) setVoted(null);
@@ -136,7 +136,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onSelect, onVote, onFl
           <span className={cn(
             'px-3 py-1 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest shadow-2xl backdrop-blur-2xl border border-white/20',
             post.status === 'verified' ? 'bg-kenya-green/90 text-white' :
-              post.status === 'under_review' ? 'bg-amber-500/90 text-white' :
+              post.status === 'pending' ? 'bg-amber-500/90 text-white' :
                 'bg-black/60 text-white'
           )}>
             {post.status.replace('_', ' ')}
@@ -156,13 +156,14 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onSelect, onVote, onFl
           </div>
           <div className="text-right shrink-0 hidden xs:block">
             <p className="text-[7px] sm:text-[8px] font-mono font-bold text-black/30 leading-none mb-0.5">{post.gps_lat?.toFixed(4)}° N</p>
-            <p className="text-[7px] sm:text-[8px] font-mono font-bold text-black/30 leading-none">{post.gps_long?.toFixed(4)}° E</p>
+            <p className="text-[7px] sm:text-[8px] font-mono font-bold text-black/30 leading-none">{post.gps_lng?.toFixed(4)}° E</p>
           </div>
         </div>
       </div>
 
-      {/* Description */}
+      {/* Title & Description */}
       <div className="px-4 sm:px-6 pt-4 pb-1">
+        <h3 className="text-sm font-bold text-black mb-1">{post.title}</h3>
         <p className="text-xs text-black/60 leading-relaxed font-medium">{post.description}</p>
       </div>
 
@@ -212,7 +213,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onSelect, onVote, onFl
             )}
           >
             <ThumbsUp size={10} />
-            Confirm{post.confirm_count ? ` (${post.confirm_count})` : ''}
+            Confirm
           </button>
           <button
             onClick={() => handleVoteClick('dispute')}
@@ -222,8 +223,19 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onSelect, onVote, onFl
             )}
           >
             <ThumbsDown size={10} />
-            Dispute{post.dispute_count ? ` (${post.dispute_count})` : ''}
+            Dispute
           </button>
+        </div>
+        
+        {/* Confidence Score Display */}
+        <div className="flex-1 flex items-center justify-center gap-1">
+          <span className={cn(
+             "text-[10px] font-black tracking-widest px-2 py-0.5 rounded-full",
+             (post.confidence_score ?? 0) > 0 ? "bg-kenya-green/10 text-kenya-green" : 
+             (post.confidence_score ?? 0) < 0 ? "bg-kenya-red/10 text-kenya-red" : "bg-black/5 text-black/40"
+          )}>
+            {post.confidence_score > 0 ? '+' : ''}{post.confidence_score?.toFixed(1) || '0.0'} SCORE
+          </span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button

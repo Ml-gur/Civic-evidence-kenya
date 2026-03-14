@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatDistanceToNow } from 'date-fns';
-import { supabase, Post, Profile, Leader, IssueCategory } from './lib/supabase';
+import { supabase, Issue, Profile, Leader, IssueCategory } from './lib/supabase';
 import { KENYA_DATA } from './lib/kenyaData';
 import { getGovernor, getMP, KENYA_LEADERS } from './lib/kenyaLeaders';
 import { CameraCapture, IssueCategory as CameraCaptureCategory } from './components/CameraCapture';
@@ -43,10 +43,10 @@ export default function App() {
   const [view, setView] = useState<'feed' | 'map' | 'leaders' | 'profile' | 'post-detail'>('feed');
   const [previousView, setPreviousView] = useState<'feed' | 'map' | 'leaders' | 'profile'>('feed');
   const [showCamera, setShowCamera] = useState(false);
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
-  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [selectedPost, setSelectedPost] = useState<Issue | null>(null);
   const [selectedLeader, setSelectedLeader] = useState<Leader | null>(null);
   const [configMissing, setConfigMissing] = useState(false);
   const [currentUserLocation, setCurrentUserLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -54,7 +54,10 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showSubmissionForm, setShowSubmissionForm] = useState<{ blob: Blob, type: 'image' | 'video', metadata: any } | null>(null);
-  const [submissionData, setSubmissionData] = useState({ description: '', county: '', constituency: '', ward: '', category: '' as string, governor: '', mp: '', mca_name: '' });
+  const [submissionData, setSubmissionData] = useState({ 
+    description: '', county: '', constituency: '', ward: '', category: '' as string, 
+    severity: 'medium' as 'low'|'medium'|'high', governor: '', mp: '', mca_name: '' 
+  });
   const [submissionStep, setSubmissionStep] = useState<number>(0);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -65,7 +68,7 @@ export default function App() {
     return localStorage.getItem('hasCompletedOnboarding') === 'true';
   });
   const [selectedCategory, setSelectedCategory] = useState<IssueCategory | 'all'>('all');
-  const [verificationTarget, setVerificationTarget] = useState<{ post: Post; type: 'confirm' | 'dispute' } | null>(null);
+  const [verificationTarget, setVerificationTarget] = useState<{ post: Issue; type: 'confirm' | 'dispute' } | null>(null);
   const [selectedConstituency, setSelectedConstituency] = useState<string | null>(null);
   const [selectedWard, setSelectedWard] = useState<string | null>(null);
   const [leaderSearchQuery, setLeaderSearchQuery] = useState('');
@@ -116,7 +119,7 @@ export default function App() {
     }
   };
 
-  const handleVote = async (post: Post, type: 'confirm' | 'dispute') => {
+  const handleVote = async (post: Issue, type: 'confirm' | 'dispute') => {
     if (!user) {
       setShowAuthModal(true);
       return;
@@ -141,7 +144,7 @@ export default function App() {
         .from('votes')
         .select('*')
         .eq('user_id', user.id)
-        .eq('post_id', post.id)
+        .eq('issue_id', post.issue_id)
         .single();
 
       if (existingVote) {
@@ -158,7 +161,7 @@ export default function App() {
       } else {
         await supabase.from('votes').insert({
           user_id: user.id,
-          post_id: post.id,
+          issue_id: post.issue_id,
           vote_type: voteType,
           verifier_method: verifierMethod,
           dispute_reason: disputeReason,
@@ -173,7 +176,7 @@ export default function App() {
     }
   };
 
-  const handleFlag = async (post: Post, type: string) => {
+  const handleFlag = async (post: Issue, type: string) => {
     if (!user) {
       setShowAuthModal(true);
       return;
@@ -182,7 +185,7 @@ export default function App() {
     try {
       await supabase.from('flags').insert({
         user_id: user.id,
-        post_id: post.id,
+        issue_id: post.issue_id,
         flag_type: type
       });
       alert('Report flagged for moderation.');
@@ -191,18 +194,19 @@ export default function App() {
     }
   };
 
-  const handleComment = async (post: Post, text: string) => {
+  const handleComment = async (post: Issue, text: string) => {
     if (!user) {
       setShowAuthModal(true);
       return;
     }
 
-    setIsCommenting(post.id);
+    setIsCommenting(post.issue_id);
     try {
       await supabase.from('comments').insert({
         user_id: user.id,
-        post_id: post.id,
-        comment_text: text
+        issue_id: post.issue_id,
+        text: text,
+        is_counter_evidence: false
       });
       fetchPosts();
     } catch (err) {
@@ -212,7 +216,7 @@ export default function App() {
     }
   };
 
-  const handlePostSelect = (post: Post) => {
+  const handlePostSelect = (post: Issue) => {
     setPreviousView(view as any);
     setSelectedPost(post);
     setView('post-detail');
@@ -227,12 +231,12 @@ export default function App() {
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from('posts')
-        .select('*, profiles(*), counties(name), constituencies(name), wards(name)')
+        .from('issues')
+        .select('*, profiles(*)')
         .order('created_at', { ascending: false });
 
       if (data) {
-        // Calculate scores for ranking
+        // Calculate scores for ranking using confidence_score
         const rankedPosts = (data as any[]).map(post => {
           const confirms = post.confirm_count || 0;
           const disputes = post.dispute_count || 0;
@@ -251,11 +255,11 @@ export default function App() {
             proximityBonus = Math.max(0, 10 - (dist * 100));
           }
 
-          const score = (confirms * 2) - (disputes * 2) + recencyBonus + proximityBonus;
+          const score = post.confidence_score + recencyBonus + proximityBonus;
           return { ...post, rankScore: score };
         }).sort((a, b) => b.rankScore - a.rankScore);
 
-        setPosts(rankedPosts);
+        setPosts(rankedPosts as unknown as Issue[]);
       } else {
         setPosts(MOCK_POSTS);
       }
@@ -273,6 +277,7 @@ export default function App() {
       lat: number; lng: number; timestamp: string;
       county: string; ward: string; constituency: string;
       category: CameraCaptureCategory;
+      severity: 'low' | 'medium' | 'high';
     }
   ) => {
     setShowSubmissionForm({ blob, type, metadata });
@@ -285,6 +290,7 @@ export default function App() {
       constituency: metadata.constituency,
       ward: metadata.ward,
       category: metadata.category,
+      severity: metadata.severity,
       governor,
       mp,
       mca_name: '',
@@ -316,26 +322,31 @@ export default function App() {
 
       const postData = {
         user_id: user?.id,
-        media_url: uploadResult.media_url,
-        thumbnail_url: uploadResult.thumbnail_url,
-        duration: uploadResult.duration,
-        media_type: type,
+        title: submissionData.category ? `${submissionData.category} Issue in ${submissionData.ward || submissionData.constituency}` : 'New Report',
         description: submissionData.description,
-        issue_category: submissionData.category || null,
-        status: 'active',
+        issue_type_id: submissionData.category || 'infrastructure',
+        subtype: null,
+        media_url: uploadResult.media_url,
+        media_type: type,
+        thumbnail_url: uploadResult.thumbnail_url,
+        media_duration: uploadResult.duration,
         gps_lat: metadata.lat,
-        gps_long: metadata.lng,
-        timestamp_capture: metadata.timestamp,
-        county_id: submissionData.county,
-        constituency_id: submissionData.constituency,
+        gps_lng: metadata.lng,
         ward_id: submissionData.ward || submissionData.constituency,
-        governor: submissionData.governor || null,
-        mp: submissionData.mp || null,
-        mca_name: submissionData.mca_name || null,
+        constituency_id: submissionData.constituency,
+        county_id: submissionData.county,
+        mca_id: null, // Need to implement lookup
+        mp_id: null,
+        governor_id: null,
+        senator_id: null,
+        responsible_body_id: null,
+        capture_timestamp: metadata.timestamp,
+        status: 'pending',
+        severity: submissionData.severity,
       };
 
       const { data: newPost, error } = await supabase
-        .from('posts')
+        .from('issues')
         .insert(postData)
         .select('*, profiles(*)')
         .single();
@@ -343,10 +354,10 @@ export default function App() {
       if (error) throw error;
       
       // Immediate local update for better UX
-      setPosts(current => [newPost as Post, ...current]);
+      setPosts(current => [newPost as unknown as Issue, ...current]);
       
       setShowSubmissionForm(null);
-      setSubmissionData({ description: '', county: '', constituency: '', ward: '', category: '', governor: '', mp: '', mca_name: '' });
+      setSubmissionData({ description: '', county: '', constituency: '', ward: '', category: '', severity: 'medium', governor: '', mp: '', mca_name: '' });
       setShowSuccess(true);
       
       // Sync with server as a background check
@@ -1458,10 +1469,12 @@ function NavButton({ active, onClick, icon, label }: { active: boolean, onClick:
   );
 }
 
-const MOCK_POSTS: Post[] = [
+const MOCK_POSTS: Issue[] = [
   {
-    id: '1',
+    issue_id: '1',
     user_id: 'u1',
+    title: 'Severe Potholes in Embakasi',
+    issue_type_id: 'roads',
     media_url: 'https://picsum.photos/seed/road/800/450',
     media_type: 'image',
     description: 'Severe potholes on Outer Ring Road near Taj Mall. Dangerous for motorists at night.',
@@ -1469,19 +1482,22 @@ const MOCK_POSTS: Post[] = [
     constituency_id: 'Embakasi South',
     ward_id: 'Pipeline',
     gps_lat: -1.3148,
-    gps_long: 36.8963,
-    timestamp_capture: new Date().toISOString(),
+    gps_lng: 36.8963,
+    capture_timestamp: new Date().toISOString(),
     created_at: new Date(Date.now() - 3600000).toISOString(),
-    status: 'active',
-    confirm_count: 5,
-    dispute_count: 0,
-    effective_confirm: 8.5,
-    effective_dispute: 0,
+    status: 'pending',
+    severity: 'high',
+    confidence_score: 8.5,
+    verifier_count: 5,
+    unique_regions_verified: 2,
+    is_sensitive: false,
     profiles: { username: 'Juma_Ke', trust_score: 85 } as any
   },
   {
-    id: '2',
+    issue_id: '2',
     user_id: 'u2',
+    title: 'Water pipe burst in Kilimani',
+    issue_type_id: 'water',
     media_url: 'https://picsum.photos/seed/water/800/450',
     media_type: 'image',
     description: 'Water pipe burst in Kilimani. Thousands of gallons being wasted for the last 5 hours.',
@@ -1489,19 +1505,22 @@ const MOCK_POSTS: Post[] = [
     constituency_id: 'Dagoretti North',
     ward_id: 'Kilimani',
     gps_lat: -1.2897,
-    gps_long: 36.7924,
-    timestamp_capture: new Date().toISOString(),
+    gps_lng: 36.7924,
+    capture_timestamp: new Date().toISOString(),
     created_at: new Date(Date.now() - 7200000).toISOString(),
     status: 'verified',
-    confirm_count: 12,
-    dispute_count: 1,
-    effective_confirm: 22.4,
-    effective_dispute: 1.0,
+    severity: 'medium',
+    confidence_score: 21.4,
+    verifier_count: 13,
+    unique_regions_verified: 4,
+    is_sensitive: false,
     profiles: { username: 'Sarah_M', trust_score: 120 } as any
   },
   {
-    id: '3',
+    issue_id: '3',
     user_id: 'u3',
+    title: 'Nyali Bridge Structural Concerns',
+    issue_type_id: 'infrastructure',
     media_url: 'https://picsum.photos/seed/bridge/800/450',
     media_type: 'image',
     description: 'Nyali bridge structural concerns. Cracks visible on the main support pillars.',
@@ -1509,14 +1528,15 @@ const MOCK_POSTS: Post[] = [
     constituency_id: 'Nyali',
     ward_id: 'Nyali',
     gps_lat: -4.0435,
-    gps_long: 39.6682,
-    timestamp_capture: new Date().toISOString(),
+    gps_lng: 39.6682,
+    capture_timestamp: new Date().toISOString(),
     created_at: new Date(Date.now() - 14400000).toISOString(),
-    status: 'active',
-    confirm_count: 2,
-    dispute_count: 8,
-    effective_confirm: 2.1,
-    effective_dispute: 9.5,
+    status: 'pending',
+    severity: 'high',
+    confidence_score: -7.4,
+    verifier_count: 10,
+    unique_regions_verified: 1,
+    is_sensitive: true,
     profiles: { username: 'Ali_Msa', trust_score: 45 } as any
   }
 ];

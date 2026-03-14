@@ -4,12 +4,12 @@ import {
     CheckCircle2, AlertTriangle, ShieldAlert, ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Post } from '../lib/supabase';
+import { Issue } from '../lib/supabase';
 import { haversineKm } from '../lib/utils';
 import { cn } from '../lib/utils';
 
 interface VerificationModalProps {
-    post: Post;
+    post: Issue;
     type: 'confirm' | 'dispute';
     userLocation: { lat: number; lng: number } | null;
     onSubmit: (payload: VerificationPayload) => Promise<void>;
@@ -46,7 +46,7 @@ export const VerificationModal: React.FC<VerificationModalProps> = ({
     const streamRef = useRef<MediaStream | null>(null);
 
     const distanceKm = userLocation
-        ? haversineKm(userLocation.lat, userLocation.lng, post.gps_lat, post.gps_long)
+        ? haversineKm(userLocation.lat, userLocation.lng, post.gps_lat, post.gps_lng)
         : null;
 
     const isNearby = distanceKm !== null && distanceKm <= MAX_CONFIRM_KM;

@@ -22,6 +22,7 @@ interface CameraCaptureProps {
       ward: string;
       constituency: string;
       category: IssueCategory;
+      severity: 'low' | 'medium' | 'high';
     }
   ) => void;
   onClose: () => void;
@@ -70,8 +71,9 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
   const [gpsStartTime] = useState(Date.now());
   const [isGeocoding, setIsGeocoding] = useState(false);
 
-  // Category
+  // Category & Severity
   const [selectedCategory, setSelectedCategory] = useState<IssueCategory | null>(null);
+  const [severity, setSeverity] = useState<'low' | 'medium' | 'high'>('medium');
   const [lang, setLang] = useState<'en' | 'sw'>('en');
 
   // Progressive refinement
@@ -374,6 +376,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
       ward: geocodedLocation?.ward || '',
       constituency: geocodedLocation?.constituency || '',
       category: selectedCategory,
+      severity,
     });
   };
 
@@ -488,6 +491,36 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
               </div>
             </motion.button>
           ))}
+
+          {/* Severity Selection */}
+          <div className="mt-8 pt-6 border-t border-white/10">
+            <h3 className="text-sm font-black uppercase tracking-widest text-stone-400 mb-3">
+              {lang === 'en' ? 'Severity / Urgency' : 'Kiwango cha Haraka'}
+            </h3>
+            <div className="grid grid-cols-3 gap-2">
+              {(['low', 'medium', 'high'] as const).map(sev => (
+                <button
+                  key={sev}
+                  onClick={() => setSeverity(sev)}
+                  className={cn(
+                    'py-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all',
+                    severity === sev
+                      ? sev === 'high' ? 'bg-red-500 border-red-400 text-white'
+                        : sev === 'medium' ? 'bg-amber-500 border-amber-400 text-white'
+                          : 'bg-emerald-500 border-emerald-400 text-white'
+                      : 'bg-white/5 border-white/10 text-stone-500 hover:bg-white/10'
+                  )}
+                >
+                  {sev}
+                </button>
+              ))}
+            </div>
+            <p className="text-[9px] text-stone-500 font-medium mt-2 text-center">
+              {severity === 'high' && (lang === 'en' ? 'Immediate danger to life or property.' : 'Hatari ya haraka kwa maisha au mali.')}
+              {severity === 'medium' && (lang === 'en' ? 'Significant disruption, requires prompt attention.' : 'Usumbufu mkubwa, inahitaji tahadhari ya haraka.')}
+              {severity === 'low' && (lang === 'en' ? 'Minor issue, needs eventual maintenance.' : 'Tatizo dogo, inahitaji matengenezo baadaye.')}
+            </p>
+          </div>
         </div>
 
         <div className="sticky bottom-0 bg-stone-950/95 backdrop-blur-xl p-6 border-t border-white/5">
