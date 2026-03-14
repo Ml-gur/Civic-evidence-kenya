@@ -62,11 +62,6 @@ export async function uploadToCloudinary(
     formData.append('file', file);
     formData.append('upload_preset', uploadPreset);
     
-    // Add transformations for images to optimize storage
-    if (type === 'image') {
-      formData.append('transformation', 'c_limit,w_1280,h_1280,q_auto,f_auto');
-    }
-
     const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`, {
       method: 'POST',
       body: formData,
