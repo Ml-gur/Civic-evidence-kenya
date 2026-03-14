@@ -36,6 +36,8 @@ CREATE TABLE posts (
     user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
     media_url TEXT NOT NULL,
     media_type TEXT CHECK (media_type IN ('image', 'video')),
+    thumbnail_url TEXT,
+    duration INTEGER,         -- duration in seconds for video
     description TEXT,
     issue_category TEXT CHECK (issue_category IN ('roads','water','health','schools','infrastructure')),
     county_id TEXT,
@@ -98,7 +100,8 @@ ALTER TABLE flags ENABLE ROW LEVEL SECURITY;
 -- Policies (Simplified for MVP)
 CREATE POLICY "Public profiles are viewable by everyone" ON profiles FOR SELECT USING (true);
 CREATE POLICY "Users can insert their own profile" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
-CREATE POLICY "Authenticated users can create posts" ON posts FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+-- DROP POLICY IF EXISTS "Authenticated users can create posts" ON posts;
+CREATE POLICY "Users can insert their own posts" ON posts FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- Functions & Triggers for Vote Counts and Weighted Trust
 CREATE OR REPLACE FUNCTION update_post_vote_counts()
@@ -228,3 +231,24 @@ begin
     return result;
 end;
 $$;
+
+-- 8. Trigger for Automatic Profile Creation
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.profiles (id, username, email)
+  VALUES (
+    new.id,
+    COALESCE(new.raw_user_meta_data->>'username', 'Citizen_' || SUBSTR(new.id::text, 1, 8)),
+    new.email
+  );
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Trigger: create profile after auth.users insertion
+-- Note: This requires running as a superuser/service role in production
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();

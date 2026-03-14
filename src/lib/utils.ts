@@ -22,38 +22,73 @@ export function isLowBandwidth(): boolean {
 // Resumable / chunked upload to Cloudinary
 // ---------------------------------------------------------------------------
 const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50 MB
+
+export interface UploadResult {
+  media_url: string;
+  thumbnail_url: string;
+  duration?: number;
+}
 
 export async function uploadToCloudinary(
   file: Blob,
   type: 'image' | 'video',
   onProgress?: (pct: number) => void
-): Promise<string> {
+): Promise<UploadResult> {
   const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
   const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
   if (!cloudName || !uploadPreset) {
-    console.warn('Cloudinary config missing – returning local object URL for demo.');
-    return URL.createObjectURL(file);
+    throw new Error('Cloudinary config missing. Please set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET in your .env file to enable evidence uploads.');
   }
+
+  // Size validation
+  if (type === 'image' && file.size > MAX_IMAGE_SIZE) {
+    throw new Error(`Image too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max 10MB.`);
+  }
+  if (type === 'video' && file.size > MAX_VIDEO_SIZE) {
+    throw new Error(`Video too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max 50MB.`);
+  }
+
+  // Helper to generate versioned transformation URLs
+  const getTransformUrl = (url: string, transform: string) => {
+    return url.replace('/upload/', `/upload/${transform}/`);
+  };
 
   // For images or small blobs (<= 4 MB) use single-shot for speed
   if (type === 'image' || file.size <= 4 * 1024 * 1024) {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('upload_preset', uploadPreset);
+    
+    // Add transformations for images to optimize storage
+    if (type === 'image') {
+      formData.append('transformation', 'c_limit,w_1280,h_1280,q_auto,f_auto');
+    }
+
     const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`, {
       method: 'POST',
       body: formData,
     });
     const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+
     onProgress?.(100);
-    return data.secure_url;
+
+    return {
+      media_url: data.secure_url,
+      thumbnail_url: type === 'image' 
+        ? getTransformUrl(data.secure_url, 'c_fill,g_auto,h_300,w_300,q_auto,f_auto')
+        : getTransformUrl(data.secure_url, 'so_1,c_fill,g_auto,h_300,w_300,q_auto,f_jpg'),
+      duration: data.duration
+    };
   }
 
   // --- Chunked upload for videos ---
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   const uniqueUploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  let lastSecureUrl = '';
+  let finalData: any = null;
 
   for (let i = 0; i < totalChunks; i++) {
     const start = i * CHUNK_SIZE;
@@ -74,19 +109,25 @@ export async function uploadToCloudinary(
     });
 
     if (!res.ok && res.status !== 308) {
-      throw new Error(`Chunk upload failed at byte ${start}`);
+      const errData = await res.json();
+      throw new Error(errData?.error?.message || `Chunk upload failed at byte ${start}`);
     }
 
     const pct = Math.round(((i + 1) / totalChunks) * 100);
     onProgress?.(pct);
 
     if (res.status !== 308) {
-      const data = await res.json();
-      lastSecureUrl = data.secure_url;
+      finalData = await res.json();
     }
   }
 
-  return lastSecureUrl;
+  if (!finalData) throw new Error('Upload failed: No response from server.');
+
+  return {
+    media_url: finalData.secure_url,
+    thumbnail_url: getTransformUrl(finalData.secure_url, 'so_1,c_fill,g_auto,h_300,w_300,q_auto,f_jpg'),
+    duration: finalData.duration
+  };
 }
 
 // ---------------------------------------------------------------------------

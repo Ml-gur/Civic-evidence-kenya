@@ -70,7 +70,9 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onSelect, onVote, onFl
             <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${post.profiles?.username || 'anon'}`} alt="" />
           </div>
           <div className="min-w-0">
-            <h4 className="text-xs sm:text-sm font-display font-bold text-black truncate">{post.profiles?.username || 'Anonymous'}</h4>
+            <h4 className="text-xs sm:text-sm font-display font-bold text-black truncate">
+              {post.profiles?.username || (post.user_id ? `Citizen_${post.user_id.substring(0, 5)}` : 'Anonymous')}
+            </h4>
             <div className="flex items-center gap-1.5 text-[8px] sm:text-[9px] text-black/30 font-black uppercase tracking-widest mt-0.5 flex-wrap">
               <span>{formatDistanceToNow(new Date(post.created_at))} ago</span>
               <span className="w-1 h-1 bg-black/10 rounded-full" />

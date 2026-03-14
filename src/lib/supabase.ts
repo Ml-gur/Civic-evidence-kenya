@@ -32,6 +32,8 @@ export type Post = {
   user_id: string;
   media_url: string;
   media_type: 'image' | 'video';
+  thumbnail_url?: string;
+  duration?: number;
   description: string;
   county_id: string;
   constituency_id: string;

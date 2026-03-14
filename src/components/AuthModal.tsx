@@ -26,21 +26,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
+        const finalUsername = username.trim() || `Citizen_${Math.floor(Math.random() * 100000).toString().padStart(5, '0')}`;
+
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            data: { username }
+            data: { username: finalUsername }
           }
         });
         if (signUpError) throw signUpError;
 
-        // Create profile
-        if (data.user) {
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .insert({ id: data.user.id, username, email });
-          if (profileError) console.error('Profile creation error:', profileError);
+        if (data.user && data.session === null) {
+          setError("Verification email sent! Please check your inbox to activate your account.");
+          return; // Don't close modal yet so they can read the message
         }
       }
       onClose();

@@ -41,6 +41,9 @@ const GPS_ACCURACY_THRESHOLD = 50; // Dropped from 150m to 50m for stronger accu
 const LEAP_DISTANCE_KM = 200;
 const LEAP_TIME_MIN = 30;
 
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50 MB
+
 type Step = 'camera' | 'review' | 'category';
 
 export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => {
@@ -203,37 +206,52 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
     let bestConstituency = '';
     let bestWard = '';
 
+    // 1. Identify the County
     for (const c of KENYA_DATA) {
       const cName = c.name.toLowerCase();
       if (tokens.some(t => t.includes(cName) || cName.includes(t))) {
         bestCounty = c.name;
-        for (const constObj of c.constituencies) {
-          const constName = constObj.name.toLowerCase();
-          if (tokens.some(t => t.includes(constName) || constName.includes(t))) {
-            bestConstituency = constObj.name;
-            for (const ward of constObj.wards) {
-              const wName = ward.toLowerCase();
-              if (tokens.some(t => t.includes(wName) || wName.includes(t))) {
-                bestWard = ward;
-                break;
-              }
-            }
-            break;
-          }
-        }
         break;
       }
     }
 
     if (!bestCounty) return null;
+    const countyObj = KENYA_DATA.find(c => c.name === bestCounty)!;
 
-    const countyObj = KENYA_DATA.find(c => c.name === bestCounty);
-    const constObj = countyObj?.constituencies.find(c => c.name === bestConstituency) || countyObj?.constituencies[0];
+    // 2. Identify the Constituency (direct match first)
+    for (const constObj of countyObj.constituencies) {
+      const constName = constObj.name.toLowerCase();
+      if (tokens.some(t => t.includes(constName) || constName.includes(t) || t === constName)) {
+        bestConstituency = constObj.name;
+        break;
+      }
+    }
+
+    // 3. Identify the Ward (and derive Constituency if we missed it)
+    for (const constObj of countyObj.constituencies) {
+      // If we already know the constituency, restrict searches to it
+      if (bestConstituency && bestConstituency !== constObj.name) continue;
+
+      for (const ward of constObj.wards) {
+        const wName = ward.toLowerCase();
+        if (tokens.some(t => t.includes(wName) || wName.includes(t))) {
+          bestWard = ward;
+          // If we found the ward but were missing the constituency, now we have it!
+          if (!bestConstituency) {
+            bestConstituency = constObj.name;
+          }
+          break;
+        }
+      }
+      if (bestWard) break;
+    }
+
+    const fallbackConstObj = countyObj.constituencies.find(c => c.name === bestConstituency) || countyObj.constituencies[0];
 
     return {
       county: bestCounty,
-      constituency: bestConstituency || constObj?.name || '',
-      ward: bestWard || constObj?.wards[0] || '',
+      constituency: bestConstituency || fallbackConstObj?.name || '',
+      ward: bestWard || fallbackConstObj?.wards[0] || '',
     };
   };
 
@@ -297,7 +315,16 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
     ctx.restore();
 
     canvas.toBlob(blob => {
-      if (blob) { setCapturedBlob(blob); setCaptureType('image'); setStep('review'); }
+      if (blob) {
+        if (blob.size > MAX_IMAGE_SIZE) {
+          setGpsError(`Photo is too large (${(blob.size / 1024 / 1024).toFixed(1)}MB). Max 10MB.`);
+          setGpsStatus('denied');
+          return;
+        }
+        setCapturedBlob(blob);
+        setCaptureType('image');
+        setStep('review');
+      }
     }, 'image/jpeg', 0.88);
   };
 
@@ -309,6 +336,13 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
     recorder.ondataavailable = e => chunks.push(e.data);
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: 'video/webm' });
+      if (blob.size > MAX_VIDEO_SIZE) {
+        setGpsError(`Video is too large (${(blob.size / 1024 / 1024).toFixed(1)}MB). Max 50MB.`);
+        setGpsStatus('denied');
+        setCapturedBlob(null);
+        setStep('camera');
+        return;
+      }
       setCapturedBlob(blob);
       setCaptureType('video');
       setCaptureTimestamp(new Date());
@@ -349,9 +383,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
     return `${(bytes / 1048576).toFixed(1)} MB`;
   };
 
-  const gpsElapsedSec = Math.floor((Date.now() - gpsStartTime) / 1000);
-
-  // =============== GPS BLOCKED ===============
+  const gpsElapsedSec = Math.floor((Date.now() - gpsStartTime) / 1000)  // =============== GPS BLOCKED ===============
   if (gpsStatus === 'denied' && gpsError) {
     return (
       <div className="fixed inset-0 z-50 bg-stone-950 flex flex-col items-center justify-center p-8 text-white text-center">
@@ -383,7 +415,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
                 { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
               );
             }}
-            className="flex items-center gap-2 bg-emerald-600 px-6 py-3 rounded-full text-xs font-black uppercase tracking-widest hover:bg-emerald-500 transition-all active:scale-95"
+            className="flex items-center gap-2 bg-emerald-600 px-6 py-3 rounded-full text-xs font-black uppercase tracking-widest hover:bg-emerald-50 transition-all active:scale-95"
           >
             <RefreshCw size={14} /> Retry GPS
           </button>
@@ -391,50 +423,6 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
             <X size={14} /> Close
           </button>
         </div>
-      </div>
-    );
-  }
-
-  // =============== ACQUIRING GPS OVERLAY ===============
-  if (gpsStatus === 'acquiring' && !location) {
-    return (
-      <div className="fixed inset-0 z-50 bg-stone-950 flex flex-col items-center justify-center p-8 text-white text-center">
-        <motion.div
-          animate={{ scale: [1, 1.15, 1] }}
-          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-          className="w-24 h-24 bg-emerald-500/10 rounded-full flex items-center justify-center mb-8 border border-emerald-500/20"
-        >
-          <Signal size={36} className="text-emerald-400" />
-        </motion.div>
-
-        <h2 className="text-2xl font-display font-black tracking-tight mb-2">Acquiring GPS Signal</h2>
-        <p className="text-stone-500 text-sm mb-6">Move to an open area for a faster lock</p>
-
-        {/* Animated signal rings */}
-        <div className="relative w-32 h-8 mb-8">
-          {[0, 1, 2].map(i => (
-            <motion.div
-              key={i}
-              className="absolute inset-0 border border-emerald-500/30 rounded-full"
-              animate={{ scale: [1, 2.5], opacity: [0.6, 0] }}
-              transition={{ duration: 2, repeat: Infinity, delay: i * 0.6 }}
-            />
-          ))}
-        </div>
-
-        <div className="flex items-center gap-3 bg-white/5 px-4 py-2 rounded-full border border-white/10">
-          <Clock size={12} className="text-stone-500" />
-          <span className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">
-            Searching{gpsElapsedSec > 5 ? ` (${gpsElapsedSec}s)` : '...'}
-          </span>
-        </div>
-
-        <button
-          onClick={onClose}
-          className="mt-10 text-stone-600 text-[10px] font-black uppercase tracking-widest hover:text-stone-400 transition-colors"
-        >
-          Cancel
-        </button>
       </div>
     );
   }
@@ -615,7 +603,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
                 {geocodedLocation?.county ? (
                   <div className="bg-black/50 backdrop-blur-xl px-2.5 py-1 rounded-lg border border-white/10">
                     <span className="text-[8px] text-white/60 font-bold leading-none">
-                      {[geocodedLocation.ward, geocodedLocation.county].filter(Boolean).join(' • ')}
+                      {[geocodedLocation.ward, geocodedLocation.constituency, geocodedLocation.county].filter(Boolean).join(' • ')}
                     </span>
                   </div>
                 ) : isGeocoding ? (
@@ -629,18 +617,31 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
               </div>
             </div>
 
-            {/* Weak GPS banner */}
+            {/* Weak/Acquiring GPS banner */}
             <AnimatePresence>
               {gpsStatus === 'weak' && (
                 <motion.div
                   initial={{ y: -20, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   exit={{ y: -20, opacity: 0 }}
-                  className="absolute top-20 left-4 right-4 bg-amber-500/90 backdrop-blur-xl rounded-xl p-2.5 flex items-center gap-2.5"
+                  className="absolute top-20 left-4 right-4 bg-amber-500/90 backdrop-blur-xl rounded-xl p-2.5 flex items-center gap-2.5 shadow-lg"
                 >
                   <AlertTriangle size={14} className="text-white shrink-0" />
                   <p className="text-[10px] text-white font-bold">
                     Weak signal (±{location?.accuracy?.toFixed(0)}m). Move outside for accurate mapping.
+                  </p>
+                </motion.div>
+              )}
+              {gpsStatus === 'acquiring' && !location && (
+                <motion.div
+                  initial={{ y: -20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: -20, opacity: 0 }}
+                  className="absolute top-20 left-4 right-4 bg-sky-500/90 backdrop-blur-xl rounded-xl p-2.5 flex items-center gap-2.5 shadow-lg"
+                >
+                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
+                  <p className="text-[10px] text-white font-bold">
+                    Acquiring GPS Signal... Please wait before capturing.
                   </p>
                 </motion.div>
               )}
@@ -668,8 +669,8 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
                   {/* Video button */}
                   {!isRecording ? (
                     <button onClick={startRecording}
-                      disabled={gpsStatus === 'acquiring' || isGeocoding}
-                      className="w-14 h-14 rounded-full bg-white/5 border-2 border-white/15 disabled:opacity-30 flex items-center justify-center hover:bg-red-500/20 hover:border-red-500/50 transition-all group">
+                      disabled={gpsStatus === 'acquiring' || isGeocoding || !location}
+                      className="w-14 h-14 rounded-full bg-white/5 border-2 border-white/15 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center hover:bg-red-500/20 hover:border-red-500/50 transition-all group">
                       <Video size={18} className="group-hover:text-red-400" />
                     </button>
                   ) : (
@@ -682,8 +683,8 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
                   {/* Photo shutter */}
                   {!isRecording && (
                     <button onClick={takePhoto}
-                      disabled={gpsStatus === 'acquiring' || isGeocoding}
-                      className="w-20 h-20 rounded-full bg-white p-1 shadow-[0_0_50px_rgba(255,255,255,0.15)] active:scale-90 transition-all disabled:opacity-30"
+                      disabled={gpsStatus === 'acquiring' || isGeocoding || !location}
+                      className="w-20 h-20 rounded-full bg-white p-1 shadow-[0_0_50px_rgba(255,255,255,0.15)] active:scale-90 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                     >
                       <div className="w-full h-full rounded-full border-[3px] border-black/10 flex items-center justify-center bg-white">
                         <Camera size={24} className="text-black" />
@@ -743,7 +744,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
                     <MapPin size={12} className="text-emerald-400" />
                     <div>
                       <p className="text-[8px] font-black text-white/40 uppercase tracking-widest">Location</p>
-                      <p className="text-[10px] font-bold text-white/80">{[geocodedLocation.ward, geocodedLocation.county].filter(Boolean).join(', ')}</p>
+                      <p className="text-[10px] font-bold text-white/80">{[geocodedLocation.ward, geocodedLocation.constituency, geocodedLocation.county].filter(Boolean).join(', ')}</p>
                     </div>
                   </div>
                 )}

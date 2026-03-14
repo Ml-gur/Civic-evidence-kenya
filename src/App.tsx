@@ -59,6 +59,7 @@ export default function App() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCommenting, setIsCommenting] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState<boolean>(() => {
     return localStorage.getItem('hasCompletedOnboarding') === 'true';
@@ -131,7 +132,8 @@ export default function App() {
 
     let counterMediaUrl: string | undefined;
     if (counterMediaBlob) {
-      counterMediaUrl = await uploadToCloudinary(counterMediaBlob, 'image');
+      const uploadResult = await uploadToCloudinary(counterMediaBlob, 'image');
+      counterMediaUrl = uploadResult.media_url;
     }
 
     try {
@@ -195,6 +197,7 @@ export default function App() {
       return;
     }
 
+    setIsCommenting(post.id);
     try {
       await supabase.from('comments').insert({
         user_id: user.id,
@@ -204,6 +207,8 @@ export default function App() {
       fetchPosts();
     } catch (err) {
       console.error('Comment failed:', err);
+    } finally {
+      setIsCommenting(null);
     }
   };
 
@@ -296,25 +301,27 @@ export default function App() {
       const { blob, type, metadata } = showSubmissionForm;
 
       // Step 1: Upload media
-      const mediaUrl = await uploadToCloudinary(blob, type);
+      const uploadResult = await uploadToCloudinary(blob, type);
 
       // Step 2: Geospatial Sync
       setSubmissionStep(2);
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 600));
 
       // Step 3: Ledger Entry
       setSubmissionStep(3);
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 600));
 
       // Step 4: Notification
       setSubmissionStep(4);
 
       const postData = {
-        user_id: user?.id || null,
-        media_url: mediaUrl,
+        user_id: user?.id,
+        media_url: uploadResult.media_url,
+        thumbnail_url: uploadResult.thumbnail_url,
+        duration: uploadResult.duration,
         media_type: type,
         description: submissionData.description,
-        issue_category: (submissionData as any).category || null,
+        issue_category: submissionData.category || null,
         status: 'active',
         gps_lat: metadata.lat,
         gps_long: metadata.lng,
@@ -325,42 +332,30 @@ export default function App() {
         governor: submissionData.governor || null,
         mp: submissionData.mp || null,
         mca_name: submissionData.mca_name || null,
-        confirm_count: 0,
-        dispute_count: 0,
-        effective_confirm: 0,
-        effective_dispute: 0,
       };
 
-      // Try Supabase insert; fall back to local mock for demo mode
-      try {
-        const { data: newPost, error } = await supabase
-          .from('posts')
-          .insert(postData)
-          .select('*, profiles(*)')
-          .single();
+      const { data: newPost, error } = await supabase
+        .from('posts')
+        .insert(postData)
+        .select('*, profiles(*)')
+        .single();
 
-        if (error) throw error;
-        setPosts([newPost as Post, ...posts]);
-      } catch (dbErr: any) {
-        // In demo mode (no Supabase), add a local mock post so the user sees feedback
-        const demoPost: Post = {
-          id: `local-${Date.now()}`,
-          created_at: new Date().toISOString(),
-          status: 'active',
-          profiles: user?.profile || null,
-          ...postData,
-        } as Post;
-        setPosts(prev => [demoPost, ...prev]);
-        console.warn('Demo mode: post saved locally only.', dbErr?.message);
-      }
-
+      if (error) throw error;
+      
+      // Immediate local update for better UX
+      setPosts(current => [newPost as Post, ...current]);
+      
       setShowSubmissionForm(null);
-      setSubmissionData({ description: '', county: '', constituency: '', ward: '' });
+      setSubmissionData({ description: '', county: '', constituency: '', ward: '', category: '', governor: '', mp: '', mca_name: '' });
       setShowSuccess(true);
+      
+      // Sync with server as a background check
+      fetchPosts();
+
       setTimeout(() => {
         setShowSuccess(false);
         setView('feed');
-      }, 3000);
+      }, 2000);
     } catch (err: any) {
       console.error('Upload failed:', err);
       setSubmitError(err?.message || 'Submission failed. Please try again.');
@@ -441,7 +436,7 @@ export default function App() {
         <div className="mx-4 mt-4 bg-amber-50 border border-amber-200/60 rounded-2xl px-4 py-3 flex items-center gap-3 text-amber-800 shadow-sm">
           <AlertCircle size={18} className="shrink-0 text-amber-500" />
           <p className="text-xs font-semibold">
-            Demo Mode: <span className="font-normal opacity-80">Connect Supabase in Secrets for live data.</span>
+            Config Missing: <span className="font-normal opacity-80">Please connect Supabase and Cloudinary via .env to enable evidence uploads.</span>
           </p>
         </div>
       )}

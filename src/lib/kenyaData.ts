@@ -524,7 +524,7 @@ export const KENYA_DATA: CountyData[] = [
       { name: "Kasarani", wards: ["Claycity", "Mwiki", "Kasarani", "Njiru", "Ruai"] },
       { name: "Ruaraka", wards: ["Baba Dogo", "Utalii", "Mathare North", "Lucky Summer", "Korogocho"] },
       { name: "Embakasi South", wards: ["Imara Daima", "Kwa Njenga", "Kwa Reuben", "Pipeline", "Kware"] },
-      { name: "Embakasi North", wards: ["Kariobangi North", "Dandora Area I", "Dandora Area Ii", "Dandora Area Iiii", "Dandora Area Iv"] },
+      { name: "Embakasi North", wards: ["Kariobangi North", "Dandora Area I", "Dandora Area Ii", "Dandora Area Iii", "Dandora Area Iv"] },
       { name: "Embakasi Central", wards: ["Kayole North", "Kayole Central", "Kayole South", "Komarock", "Matopeni"] },
       { name: "Embakasi East", wards: ["Upper Savannah", "Lower Savannah", "Embakasi", "Utawala", "Mihango"] },
       { name: "Embakasi West", wards: ["Umoja I", "Umoja Ii", "Mowlem", "Kariobangi South"] },
