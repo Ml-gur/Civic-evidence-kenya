@@ -32,58 +32,51 @@ const DISPUTE_REASONS = [
     'Personal privacy violation',
 ];
 
-const MAX_CONFIRM_KM = 50;
+const MAX_CONFIRM_KM = 2.0;
 
 export const VerificationModal: React.FC<VerificationModalProps> = ({
     post, type, userLocation, onSubmit, onClose
 }) => {
     const [disputeReason, setDisputeReason] = useState('');
-    const [corroborating, setCorroborating] = useState<Blob | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [showCameraForCorroboration, setShowCameraForCorroboration] = useState(false);
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const streamRef = useRef<MediaStream | null>(null);
+    const [localLocation, setLocalLocation] = useState<{ lat: number; lng: number } | null>(userLocation);
 
-    const distanceKm = userLocation
-        ? haversineKm(userLocation.lat, userLocation.lng, post.gps_lat, post.gps_lng)
+    const activeLocation = localLocation || userLocation;
+
+    const distanceKm = activeLocation
+        ? haversineKm(activeLocation.lat, activeLocation.lng, post.gps_lat, post.gps_lng)
         : null;
 
     const isNearby = distanceKm !== null && distanceKm <= MAX_CONFIRM_KM;
 
-    const startCorroborationCamera = async () => {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-            streamRef.current = stream;
-            if (videoRef.current) videoRef.current.srcObject = stream;
-            setShowCameraForCorroboration(true);
-        } catch {
-            setError('Camera access denied. Cannot capture corroborating evidence.');
+    const requestLocation = () => {
+        setError(null);
+        if (!navigator.geolocation) {
+            setError("Geolocation is not supported by your browser.");
+            return;
         }
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setLocalLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+            },
+            (err) => {
+                setError(`Could not get location: ${err.message}. Please enable location permissions.`);
+            },
+            { enableHighAccuracy: true }
+        );
     };
 
-    const captureCorroboration = () => {
-        if (!videoRef.current) return;
-        const canvas = document.createElement('canvas');
-        canvas.width = videoRef.current.videoWidth;
-        canvas.height = videoRef.current.videoHeight;
-        canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
-        canvas.toBlob((blob) => {
-            if (blob) {
-                setCorroborating(blob);
-                streamRef.current?.getTracks().forEach(t => t.stop());
-                setShowCameraForCorroboration(false);
-            }
-        }, 'image/jpeg', 0.85);
-    };
-
-    const canSubmitConfirm = isNearby || corroborating !== null;
+    const canSubmitConfirm = isNearby;
     const canSubmitDispute = disputeReason.trim().length > 0;
 
     const handleSubmit = async () => {
         setError(null);
         if (type === 'confirm' && !canSubmitConfirm) {
-            setError(`You must be within ${MAX_CONFIRM_KM} km or upload corroborating evidence.`);
+            setError(distanceKm === null 
+              ? "Location access is required to verify this report." 
+              : `You must be within ${MAX_CONFIRM_KM}km to verify (currently ${distanceKm.toFixed(1)}km away).`);
             return;
         }
         if (type === 'dispute' && !canSubmitDispute) {
@@ -94,10 +87,12 @@ export const VerificationModal: React.FC<VerificationModalProps> = ({
         try {
             await onSubmit({
                 voteType: type,
-                verifierMethod: type === 'dispute' ? 'dispute' : isNearby ? 'proximity' : 'media_corroborating',
+                verifierMethod: type === 'dispute' ? 'dispute' : 'proximity',
                 disputeReason: type === 'dispute' ? disputeReason : undefined,
-                counterMediaBlob: corroborating ?? undefined,
-            });
+                user_lat: activeLocation?.lat,
+                user_lng: activeLocation?.lng,
+                distance_m: distanceKm ? distanceKm * 1000 : undefined
+            } as any);
             onClose();
         } catch (err: any) {
             setError(err?.message || 'Submission failed. Please try again.');
@@ -163,61 +158,27 @@ export const VerificationModal: React.FC<VerificationModalProps> = ({
                                 'mt-0.5 shrink-0',
                                 isNearby ? 'text-emerald-500' : 'text-amber-500'
                             )} />
-                            <div>
+                            <div className="flex-1">
                                 <p className="text-xs font-bold text-stone-800">
                                     {distanceKm === null
-                                        ? 'Location not available'
+                                        ? 'Location not active'
                                         : isNearby
                                             ? `You are ${distanceKm.toFixed(1)} km from this location ✓`
-                                            : `You are ${distanceKm.toFixed(0)} km away — too far to confirm by proximity`}
+                                            : `You are ${distanceKm.toFixed(1)} km away — too far to verify`}
                                 </p>
-                                {!isNearby && (
-                                    <p className="text-[10px] text-stone-500 mt-1 font-medium">
-                                        Upload a fresh corroborating photo taken at the scene to confirm remotely.
+                                {distanceKm === null ? (
+                                    <button 
+                                        onClick={requestLocation}
+                                        className="mt-2 text-[10px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 active:scale-95"
+                                    >
+                                        Enable GPS & Verify
+                                    </button>
+                                ) : !isNearby && (
+                                    <p className="text-[10px] text-stone-500 mt-1 font-medium italic">
+                                        Verification is only permitted within 2km of the incident.
                                     </p>
                                 )}
                             </div>
-                        </div>
-                    )}
-
-                    {/* Corroborating image capture (confirm) */}
-                    {type === 'confirm' && !isNearby && (
-                        <div>
-                            {!corroborating && !showCameraForCorroboration && (
-                                <button
-                                    onClick={startCorroborationCamera}
-                                    className="w-full border-2 border-dashed border-stone-200 rounded-2xl p-6 flex flex-col items-center gap-3 hover:border-emerald-300 hover:bg-emerald-50/50 transition-all"
-                                >
-                                    <Camera size={28} className="text-stone-300" />
-                                    <span className="text-xs font-bold text-stone-400">Capture corroborating evidence</span>
-                                </button>
-                            )}
-                            {showCameraForCorroboration && (
-                                <div className="rounded-2xl overflow-hidden border border-stone-200 bg-black">
-                                    <video ref={videoRef} autoPlay playsInline muted className="w-full aspect-video object-cover" />
-                                    <div className="p-4 flex gap-3">
-                                        <button onClick={() => { streamRef.current?.getTracks().forEach(t => t.stop()); setShowCameraForCorroboration(false); }}
-                                            className="flex-1 py-2.5 rounded-xl border border-stone-200 text-xs font-bold text-stone-500">Cancel</button>
-                                        <button onClick={captureCorroboration}
-                                            className="flex-[2] py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold">Capture Photo</button>
-                                    </div>
-                                </div>
-                            )}
-                            {corroborating && (
-                                <div className="relative rounded-2xl overflow-hidden border border-emerald-200">
-                                    <img src={URL.createObjectURL(corroborating)} alt="Corroborating" className="w-full aspect-video object-cover" />
-                                    <div className="absolute inset-0 bg-emerald-500/10 flex items-center justify-center">
-                                        <div className="bg-white px-4 py-2 rounded-full flex items-center gap-2 shadow-lg">
-                                            <CheckCircle2 size={16} className="text-emerald-500" />
-                                            <span className="text-xs font-bold text-emerald-700">Evidence captured</span>
-                                        </div>
-                                    </div>
-                                    <button onClick={() => setCorroborating(null)}
-                                        className="absolute top-3 right-3 bg-white/80 backdrop-blur p-1.5 rounded-full">
-                                        <X size={14} />
-                                    </button>
-                                </div>
-                            )}
                         </div>
                     )}
 
@@ -240,38 +201,6 @@ export const VerificationModal: React.FC<VerificationModalProps> = ({
                                         {reason}
                                     </button>
                                 ))}
-                            </div>
-
-                            {/* Optional counter evidence */}
-                            <div className="pt-2">
-                                <p className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-2">Counter-evidence (optional)</p>
-                                {!corroborating && !showCameraForCorroboration && (
-                                    <button onClick={startCorroborationCamera}
-                                        className="w-full border border-dashed border-stone-200 rounded-xl p-4 flex items-center gap-3 hover:border-red-300 hover:bg-red-50/50 transition-all">
-                                        <Camera size={18} className="text-stone-300" />
-                                        <span className="text-xs font-medium text-stone-400">Add counter photo</span>
-                                    </button>
-                                )}
-                                {showCameraForCorroboration && (
-                                    <div className="rounded-xl overflow-hidden border border-stone-200 bg-black">
-                                        <video ref={videoRef} autoPlay playsInline muted className="w-full aspect-video object-cover" />
-                                        <div className="p-3 flex gap-2">
-                                            <button onClick={() => { streamRef.current?.getTracks().forEach(t => t.stop()); setShowCameraForCorroboration(false); }}
-                                                className="flex-1 py-2 rounded-lg border text-xs font-bold text-stone-500">Cancel</button>
-                                            <button onClick={captureCorroboration}
-                                                className="flex-[2] py-2 rounded-lg bg-red-500 text-white text-xs font-bold">Capture</button>
-                                        </div>
-                                    </div>
-                                )}
-                                {corroborating && (
-                                    <div className="relative rounded-xl overflow-hidden border border-stone-200">
-                                        <img src={URL.createObjectURL(corroborating)} alt="Counter" className="w-full aspect-video object-cover" />
-                                        <button onClick={() => setCorroborating(null)}
-                                            className="absolute top-2 right-2 bg-white/80 backdrop-blur p-1.5 rounded-full">
-                                            <X size={12} />
-                                        </button>
-                                    </div>
-                                )}
                             </div>
                         </div>
                     )}
@@ -296,13 +225,13 @@ export const VerificationModal: React.FC<VerificationModalProps> = ({
                         )}
                     >
                         {submitting ? (
-                            <>
+                            <div className="flex items-center gap-2">
                                 <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                                 </svg>
-                                Submitting...
-                            </>
+                                <span>Submitting...</span>
+                            </div>
                         ) : type === 'confirm' ? 'Confirm This Report' : 'Submit Dispute'}
                     </button>
                 </div>

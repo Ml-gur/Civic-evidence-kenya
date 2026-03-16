@@ -37,7 +37,9 @@ import { PostCard } from './components/PostCard';
 import { AuthModal } from './components/AuthModal';
 import { Onboarding } from './components/Onboarding';
 import { VerificationModal, VerificationPayload } from './components/VerificationModal';
-import { cn, uploadToCloudinary } from './lib/utils';
+import { LocationPermissionModal } from './components/LocationPermissionModal';
+import { CommentSection } from './components/CommentSection';
+import { cn, uploadToCloudinary, haversineKm } from './lib/utils';
 
 export default function App() {
   const [view, setView] = useState<'feed' | 'map' | 'leaders' | 'profile' | 'post-detail'>('feed');
@@ -72,6 +74,8 @@ export default function App() {
   const [selectedConstituency, setSelectedConstituency] = useState<string | null>(null);
   const [selectedWard, setSelectedWard] = useState<string | null>(null);
   const [leaderSearchQuery, setLeaderSearchQuery] = useState('');
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [fullscreenMedia, setFullscreenMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
 
   const COUNTIES = ['All', ...KENYA_DATA.map(c => c.name)];
 
@@ -85,25 +89,51 @@ export default function App() {
   ];
 
   useEffect(() => {
-    // Get user location for proximity ranking
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setCurrentUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      (err) => console.error('Location access denied for ranking:', err)
-    );
-
-    const url = import.meta.env.VITE_SUPABASE_URL;
-    const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-    if (!url || !key) {
-      setConfigMissing(true);
-      setLoading(false);
-      setPosts(MOCK_POSTS); // Still show mock data for preview
-      return;
-    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        checkUser(); // Refresh profile
+      }
+    });
 
     fetchPosts();
     checkUser();
-  }, [currentUserLocation]);
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#/issue/')) {
+        const id = hash.split('/issue/')[1];
+        if (id) {
+          const post = posts.find(p => p.issue_id === id);
+          if (post) {
+            setSelectedPost(post);
+            setView('post-detail');
+          } else if (posts.length > 0) {
+            // Post not found in loaded posts
+            window.location.hash = '#/';
+          }
+        }
+      } else if (hash === '#/leaders') {
+        setView('leaders');
+      } else if (hash === '#/profile') {
+        setView('profile');
+      } else if (hash === '#/map') {
+        setView('map');
+      } else {
+        setView('feed');
+        setSelectedPost(null);
+      }
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    if (posts.length > 0) handleHashChange();
+
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [posts]);
 
   const checkUser = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -194,37 +224,43 @@ export default function App() {
     }
   };
 
-  const handleComment = async (post: Issue, text: string) => {
-    if (!user) {
+  const handleAddComment = async (text: string, mediaBlob?: Blob, parentId?: string) => {
+    if (!selectedPost || !user) {
       setShowAuthModal(true);
       return;
     }
 
-    setIsCommenting(post.issue_id);
+    let mediaUrl: string | undefined;
+    let mediaType: 'image' | 'video' | undefined;
+
+    if (mediaBlob) {
+      const uploadResult = await uploadToCloudinary(mediaBlob, 'image');
+      mediaUrl = uploadResult.media_url;
+      mediaType = 'image';
+    }
+
     try {
       await supabase.from('comments').insert({
         user_id: user.id,
-        issue_id: post.issue_id,
+        issue_id: selectedPost.issue_id,
         text: text,
-        is_counter_evidence: false
+        media_url: mediaUrl,
+        media_type: mediaType,
+        parent_comment_id: parentId,
+        is_counter_evidence: !!mediaUrl
       });
       fetchPosts();
     } catch (err) {
       console.error('Comment failed:', err);
-    } finally {
-      setIsCommenting(null);
     }
   };
 
   const handlePostSelect = (post: Issue) => {
-    setPreviousView(view as any);
-    setSelectedPost(post);
-    setView('post-detail');
+    window.location.hash = `#/issue/${post.issue_id}`;
   };
 
   const handleBackFromDetail = () => {
-    setView(previousView);
-    setSelectedPost(null);
+    window.location.hash = '#/';
   };
 
   const fetchPosts = async () => {
@@ -482,8 +518,11 @@ export default function App() {
                 <div className="flex flex-col xs:flex-row items-center justify-center gap-3 px-4 sm:px-0">
                   <button
                     onClick={() => {
-                      if (!user) setShowAuthModal(true);
-                      else setShowCamera(true);
+                      if (!user) {
+                        setShowAuthModal(true);
+                      } else {
+                        setShowLocationModal(true);
+                      }
                     }}
                     className="btn-kenya bg-kenya-black text-white hover:bg-kenya-red shadow-2xl shadow-kenya-red/20 w-full xs:w-auto"
                   >
@@ -632,7 +671,7 @@ export default function App() {
                           onSelect={() => handlePostSelect(post)}
                           onVote={(type) => handleVote(post, type)}
                           onFlag={(type) => handleFlag(post, type)}
-                          onComment={(text) => handleComment(post, text)}
+                          onComment={(text) => handleAddComment(text)}
                         />
                       </motion.div>
                     ))}
@@ -951,120 +990,107 @@ export default function App() {
               </div>
             </motion.div>
           )}
-          {view === 'post-detail' && selectedPost && (
+          {view === 'post-detail' && (
             <motion.div
               key="post-detail"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="max-w-md mx-auto px-6 pt-6 pb-32"
+              className="max-w-2xl mx-auto px-4 pt-4 pb-32"
             >
-              <button
-                onClick={handleBackFromDetail}
-                className="flex items-center gap-2 text-stone-400 mb-6 font-bold text-xs uppercase tracking-widest hover:text-emerald-600 transition-colors"
-              >
-                <ChevronRight className="rotate-180" size={16} />
-                Back
-              </button>
-
-              <div className="evidence-card overflow-hidden">
-                {/* Detailed Media */}
-                <div className="relative aspect-video bg-stone-950 flex items-center justify-center overflow-hidden">
-                  {selectedPost.media_type === 'image' ? (
-                    <img src={selectedPost.media_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                  ) : (
-                    <video src={selectedPost.media_url} controls className="w-full h-full object-cover" />
-                  )}
-
-                  <div className="absolute top-4 right-4">
-                    <span className={cn(
-                      "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-2xl backdrop-blur-xl border border-white/20",
-                      selectedPost.status === 'verified' ? "bg-emerald-500/80 text-white" :
-                        selectedPost.status === 'under_review' ? "bg-amber-500/80 text-white" :
-                          "bg-black/40 text-white"
-                    )}>
-                      {selectedPost.status.replace('_', ' ')}
-                    </span>
-                  </div>
+              {!selectedPost ? (
+                <div className="flex flex-col items-center justify-center py-20 text-stone-400">
+                  <div className="w-16 h-16 bg-stone-100 rounded-full mb-4 animate-pulse" />
+                  <p className="text-xs font-bold uppercase tracking-widest">Loading Report...</p>
                 </div>
+              ) : (
+                <>
+                  <button
+                    onClick={handleBackFromDetail}
+                    className="flex items-center gap-2 text-stone-500 font-bold text-xs uppercase tracking-widest mb-6 hover:text-stone-900 transition-colors"
+                  >
+                    <ChevronRight className="rotate-180" size={16} />
+                    Back
+                  </button>
 
-                <div className="p-6 space-y-6">
-                  {/* Author Info */}
-                  <div className="flex items-center gap-3 pb-6 border-b border-stone-100">
-                    <div className="w-12 h-12 bg-stone-100 rounded-2xl flex items-center justify-center text-stone-400 border border-stone-200/50 overflow-hidden">
-                      <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedPost.profiles?.username || 'anon'}`} alt="" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-stone-900">{selectedPost.profiles?.username || 'Anonymous'}</h4>
-                      <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">
-                        {formatDistanceToNow(new Date(selectedPost.created_at))} ago
-                      </p>
-                    </div>
-                  </div>
+                  <div className="evidence-card overflow-hidden">
+                    {/* Detailed Media */}
+                    <div 
+                      className="relative aspect-video bg-stone-950 flex items-center justify-center overflow-hidden cursor-zoom-in"
+                      onClick={() => setSelectedPost && setFullscreenMedia({ url: selectedPost.media_url, type: selectedPost.media_type })}
+                    >
+                      {selectedPost.media_type === 'image' ? (
+                        <img src={selectedPost.media_url} alt="" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" referrerPolicy="no-referrer" />
+                      ) : (
+                        <video src={selectedPost.media_url} controls className="w-full h-full object-cover" />
+                      )}
 
-                  {/* Location Details */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-stone-400 mb-1">County</p>
-                      <p className="text-xs font-bold text-stone-900">{selectedPost.county_id}</p>
+                      <div className="absolute top-4 right-4">
+                        <span className={cn(
+                          "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-2xl backdrop-blur-xl border border-white/20",
+                          selectedPost.status === 'verified' ? "bg-emerald-500/80 text-white" :
+                            selectedPost.status === 'under_review' ? "bg-amber-500/80 text-white" :
+                              "bg-black/40 text-white"
+                        )}>
+                          {selectedPost.status.replace('_', ' ')}
+                        </span>
+                      </div>
                     </div>
-                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-stone-400 mb-1">Ward</p>
-                      <p className="text-xs font-bold text-stone-900">{selectedPost.ward_id}</p>
-                    </div>
-                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-stone-400 mb-1">Latitude</p>
-                      <p className="text-xs font-mono font-bold text-stone-900">{selectedPost.gps_lat.toFixed(6)}</p>
-                    </div>
-                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-stone-400 mb-1">Longitude</p>
-                      <p className="text-xs font-mono font-bold text-stone-900">{selectedPost.gps_long.toFixed(6)}</p>
-                    </div>
-                  </div>
 
-                  {/* Description */}
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-stone-400">Description</h3>
-                    <p className="text-sm text-stone-600 leading-relaxed font-medium">
-                      {selectedPost.description}
-                    </p>
-                  </div>
-
-                  {/* Comments Section */}
-                  <div className="pt-6 border-t border-stone-100 space-y-4">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-stone-400">Verification Feed</h3>
-                    <div className="space-y-4">
-                      <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100/50">
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="w-6 h-6 rounded-full bg-emerald-200" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-900">System_Verify</span>
-                          <span className="text-[9px] font-bold text-emerald-600 ml-auto">Verified Location</span>
+                    <div className="p-6 space-y-6">
+                      {/* Author Info */}
+                      <div className="flex items-center gap-3 pb-6 border-b border-stone-100">
+                        <div className="w-12 h-12 bg-stone-100 rounded-2xl flex items-center justify-center text-stone-400 border border-stone-200/50 overflow-hidden">
+                          <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedPost.profiles?.username || 'anon'}`} alt="" />
                         </div>
-                        <p className="text-xs text-emerald-800 font-medium">GPS coordinates match the reported ward boundaries.</p>
-                      </div>
-
-                      <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="w-6 h-6 rounded-full bg-stone-200" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-stone-900">Musa_K</span>
+                        <div>
+                          <h4 className="text-sm font-bold text-stone-900">{selectedPost.profiles?.username || 'Anonymous'}</h4>
+                          <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">
+                            {formatDistanceToNow(new Date(selectedPost.created_at))} ago
+                          </p>
                         </div>
-                        <p className="text-xs text-stone-600 font-medium">I was here 10 mins ago, the road is indeed blocked. Confirming.</p>
                       </div>
 
-                      <div className="flex gap-2 pt-2">
-                        <input
-                          type="text"
-                          placeholder="Add evidence or comment..."
-                          className="flex-1 bg-stone-50 border border-stone-200/60 rounded-2xl px-4 py-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
-                        />
-                        <button className="bg-emerald-600 text-white p-3 rounded-2xl shadow-lg shadow-emerald-600/20">
-                          <MessageSquare size={18} />
-                        </button>
+                      {/* Location Details */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-stone-400 mb-1">County</p>
+                          <p className="text-xs font-bold text-stone-900">{selectedPost.county_id}</p>
+                        </div>
+                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-stone-400 mb-1">Ward</p>
+                          <p className="text-xs font-bold text-stone-900">{selectedPost.ward_id}</p>
+                        </div>
+                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-stone-400 mb-1">Latitude</p>
+                          <p className="text-xs font-mono font-bold text-stone-900">{selectedPost.gps_lat.toFixed(6)}</p>
+                        </div>
+                        <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-stone-400 mb-1">Longitude</p>
+                          <p className="text-xs font-mono font-bold text-stone-900">{selectedPost.gps_lng.toFixed(6)}</p>
+                        </div>
                       </div>
+
+                      {/* Description */}
+                      <div className="space-y-2">
+                        <h3 className="text-xs font-black uppercase tracking-widest text-stone-400">Description</h3>
+                        <p className="text-sm text-stone-600 leading-relaxed font-medium">
+                          {selectedPost.description}
+                        </p>
+                      </div>
+
+                      {/* Comments Section */}
+                      <CommentSection 
+                        postId={selectedPost.issue_id}
+                        comments={selectedPost.comments || []}
+                        currentUser={user}
+                        onAddComment={handleAddComment}
+                        onExpandMedia={(url, type) => setFullscreenMedia({ url, type })}
+                      />
                     </div>
                   </div>
-                </div>
-              </div>
+                </>
+              )}
             </motion.div>
           )}
           {view === 'profile' && (
@@ -1137,7 +1163,7 @@ export default function App() {
                 <div className="space-y-8">
                   {posts.filter(p => p.user_id === (user?.id || 'anonymous')).length > 0 ? (
                     posts.filter(p => p.user_id === (user?.id || 'anonymous')).map(post => (
-                      <PostCard key={post.id} post={post} onSelect={() => handlePostSelect(post)} />
+                      <PostCard key={post.issue_id} post={post} onSelect={() => handlePostSelect(post)} />
                     ))
                   ) : (
                     <div className="bg-white rounded-[2rem] p-10 border border-dashed border-stone-200 text-center">
@@ -1414,12 +1440,53 @@ export default function App() {
         }
       </AnimatePresence >
 
+      {/* Lightbox */}
+      <AnimatePresence>
+        {fullscreenMedia && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-2xl flex items-center justify-center p-4 sm:p-10"
+            onClick={() => setFullscreenMedia(null)}
+          >
+            <button className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors">
+              <X size={32} />
+            </button>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="w-full max-w-5xl max-h-full flex items-center justify-center"
+              onClick={e => e.stopPropagation()}
+            >
+              {fullscreenMedia.type === 'image' ? (
+                <img src={fullscreenMedia.url} alt="" className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl" />
+              ) : (
+                <video src={fullscreenMedia.url} controls autoPlay className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl" />
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <LocationPermissionModal 
+        isOpen={showLocationModal}
+        onClose={() => setShowLocationModal(false)}
+        onConfirm={() => {
+          setShowLocationModal(false);
+          setShowCamera(true);
+        }}
+      />
+
       {/* Auth Modal */}
-      < AuthModal
+      <AuthModal
         isOpen={showAuthModal}
         onClose={() => {
           setShowAuthModal(false);
-          checkUser();
+        }}
+        onSuccess={(user) => {
+          setUser(user);
+          setShowAuthModal(false);
         }}
       />
 

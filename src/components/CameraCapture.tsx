@@ -752,8 +752,8 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
         {/* ===== Review Screen ===== */}
         {step === 'review' && capturedBlob && (
           <div className="w-full h-full flex flex-col bg-[#050505]">
-            <div className="flex-1 relative flex items-center justify-center p-3">
-              <div className="relative max-w-4xl w-full h-full flex items-center justify-center rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+            <div className="flex-1 relative flex items-center justify-center p-3 min-h-0">
+              <div className="relative max-w-4xl w-full h-full flex items-center justify-center rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-black/40">
                 {captureType === 'image' ? (
                   <img src={URL.createObjectURL(capturedBlob)} className="w-full h-full object-contain" alt="Evidence" />
                 ) : (
@@ -769,7 +769,7 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
             </div>
 
             {/* Metadata cards */}
-            <div className="px-4 pb-2">
+            <div className="px-4 py-2 shrink-0">
               <div className="flex gap-2 overflow-x-auto no-scrollbar">
                 {/* Location */}
                 {geocodedLocation?.county && (

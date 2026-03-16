@@ -73,6 +73,9 @@ export type Vote = {
   issue_id: string;
   vote_type: 'confirm' | 'dispute';
   verifier_method: 'proximity' | 'media_corroborating' | 'dispute';
+  user_lat?: number;
+  user_lng?: number;
+  distance_m?: number;
   dispute_reason?: string;
   counter_media_url?: string;
   created_at: string;
@@ -94,6 +97,7 @@ export type Comment = {
   text: string;
   media_url?: string;
   media_type?: 'image' | 'video';
+  parent_comment_id?: string;
   is_counter_evidence: boolean;
   created_at: string;
   profiles?: Profile;

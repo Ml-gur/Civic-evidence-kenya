@@ -23,14 +23,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   };
 
   const requestLocation = () => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        () => handleNext(),
-        () => handleNext() // Even if denied, we move on. App handles missing location gracefully.
-      );
-    } else {
-      handleNext();
-    }
+    handleNext();
   };
 
   const requestCamera = async () => {
