@@ -812,8 +812,15 @@ export const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose
               </div>
             </div>
 
-            {/* Action buttons */}
-            <div className="p-4 pt-2 bg-black border-t border-white/5">
+              {/* Confirmation message */}
+              <div className="p-4 bg-black/50">
+                <p className="text-stone-400 text-sm text-center">
+                  Please confirm that this media clearly shows the issue you are reporting. If it does, proceed to select the category.
+                </p>
+              </div>
+
+              {/* Action buttons */}
+              <div className="p-4 pt-2 bg-black border-t border-white/5">
               {/* Step indicator */}
               <div className="flex items-center justify-center gap-2 mb-3">
                 {['Capture', 'Review', 'Category'].map((s, i) => (

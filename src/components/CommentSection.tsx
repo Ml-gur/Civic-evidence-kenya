@@ -60,6 +60,37 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
 
   const handleSubmit = async () => {
     if (!newComment.trim() && !capturedMedia) return;
+    
+    // Validate media if present - ensure it's relevant evidence
+    if (capturedMedia) {
+      // Check file size limits (same as main capture)
+      const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
+      const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50 MB
+      
+      // Check MIME type - only allow images and videos
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm'];
+      if (!allowedTypes.includes(capturedMedia.type)) {
+        alert('Invalid file type. Please upload only images (JPEG, PNG, WebP) or videos (MP4, WebM).');
+        return;
+      }
+      
+      // We can't easily check MIME type here without File API, but we can warn about size
+      if (capturedMedia.size > MAX_IMAGE_SIZE && capturedMedia.type.startsWith('image/')) {
+        alert('Image is too large. Maximum size is 10MB.');
+        return;
+      }
+      
+      if (capturedMedia.size > MAX_VIDEO_SIZE && capturedMedia.type.startsWith('video/')) {
+        alert('Video is too large. Maximum size is 50MB.');
+        return;
+      }
+      
+      // Additional validation: Ask user to confirm this is relevant evidence
+      if (!window.confirm('Is this media directly related to the issue you are commenting on? Please ensure you only upload relevant evidence.')) {
+        return;
+      }
+    }
+    
     setIsSubmitting(true);
     try {
       await onAddComment(newComment, capturedMedia ?? undefined, replyTo?.comment_id);
@@ -68,6 +99,7 @@ export const CommentSection: React.FC<CommentSectionProps> = ({
       setCapturedMedia(null);
     } catch (err) {
       console.error(err);
+      alert('Failed to submit comment. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
